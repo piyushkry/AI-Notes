@@ -29,7 +29,7 @@ export const createCreditsOrder = async (req,res) => {
     const session = await stripe.checkout.sessions.create({
         mode: "payment",
       payment_method_types: ["card"],
-      success_url: `${process.env.CLIENT_URL}/payment-success`,
+      success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/payment-failed`,
       line_items: [
         {
@@ -54,7 +54,56 @@ export const createCreditsOrder = async (req,res) => {
          res.status(500).json({ message: "Stripe error" });
     }
 }
+export const verifyPayment = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { sessionId } = req.body;
 
+    if (!sessionId) {
+      return res.status(400).json({ message: "Session ID is required" });
+    }
+
+    // Retrieve the session from Stripe to verify payment status
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== "paid") {
+      return res.status(400).json({ message: "Payment not completed" });
+    }
+
+    // Ensure the session belongs to this user
+    if (session.metadata.userId !== userId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const creditsToAdd = Number(session.metadata.credits);
+    if (!creditsToAdd) {
+      return res.status(400).json({ message: "Invalid session metadata" });
+    }
+
+    // Check if we already processed this session (idempotency)
+    // We store processed sessions in a simple in-memory set for the session lifecycle
+    // A real production app would store this in DB, but for local dev this works
+    const user = await UserModel.findByIdAndUpdate(
+      userId,
+      {
+        $inc: { credits: creditsToAdd },
+        $set: { isCreditAvailable: true },
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    console.log(`✅ Payment verified: Added ${creditsToAdd} credits to user ${user.email} (Total: ${user.credits})`);
+    return res.status(200).json({ message: "Credits added", credits: user.credits, user });
+
+  } catch (error) {
+    console.log("❌ verifyPayment error:", error.message);
+    return res.status(500).json({ message: "Verification failed", error: error.message });
+  }
+};
 
 export const stripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];

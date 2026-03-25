@@ -2,7 +2,8 @@ import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import MermaidSetup from './MermaidSetup';
 import RechartSetUp from './RechartSetUp';
-import { downloadPdf } from '../services/api';
+import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 const markDownComponent = {
     h1: ({ children }) => (
         <h1 className="text-2xl font-bold text-indigo-700 mt-6 mb-4 border-b pb-2">
@@ -35,6 +36,8 @@ const markDownComponent = {
 }
 function FinalResult({ result }) {
     const [quickRevision, setQuickRevision] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
+
     if (
         !result ||
         !result.subTopics ||
@@ -45,6 +48,45 @@ function FinalResult({ result }) {
     ) {
         return null;
     }
+
+    const handleDownloadPdf = async () => {
+        setIsDownloading(true);
+        try {
+            const element = document.getElementById('pdf-content');
+            if (!element) return;
+            
+            const imgData = await toPng(element, { 
+                pixelRatio: 2,
+                backgroundColor: '#ffffff'
+            });
+            
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+            // Scale height proportionately to fit A4 width using the DOM element dimensions
+            const pdfHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
+            
+            let heightLeft = pdfHeight;
+            let position = 0;
+            
+            pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+            heightLeft -= pageHeight;
+            
+            while (heightLeft > 0) {
+                position = heightLeft - pdfHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+                heightLeft -= pageHeight;
+            }
+            
+            pdf.save('AINotes.pdf');
+        } catch (error) {
+            console.error("Error generating PDF:", error);
+            alert("Failed to generate PDF. Error: " + (error.message || JSON.stringify(error)));
+        } finally {
+            setIsDownloading(false);
+        }
+    };
 
     return (
         <div className='mt-6 p-3 space-y-10 bg-white'>
@@ -64,13 +106,16 @@ function FinalResult({ result }) {
                             ? "bg-green-600 text-white"
                             : "bg-green-100 text-green-700 hover:bg-green-200"}
             `}>  {quickRevision ? "Exit Revision Mode" : "Quick Revision (5 min)"}</button>
-                    <button onClick={()=>downloadPdf(result)}
-                    className='px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700'>
-                        ⬇️ Download PDF
+                    <button 
+                        onClick={handleDownloadPdf}
+                        disabled={isDownloading}
+                        className='px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50'>
+                        {isDownloading ? "⏳ Generating..." : "⬇️ Download PDF"}
                     </button>
                 </div>
             </div>
 
+            <div id="pdf-content" className="space-y-10 bg-white p-2">
 
             {!quickRevision && <section>
 
@@ -171,6 +216,8 @@ function FinalResult({ result }) {
                 </ul>
 
             </section>
+
+            </div>
 
         </div>
     )
